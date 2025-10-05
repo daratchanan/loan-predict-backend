@@ -1,0 +1,11 @@
+# requirements.txt
+fastapi
+uvicorn[standard]
+scikit-learn
+pandas
+joblib
+python-dotenv
+sqlalchemy
+psycopg2-binary
+xgboost
+imbalanced-learn

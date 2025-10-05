@@ -1,0 +1,30 @@
+# docker-compose.yml
+
+version: '3.8'
+
+services:
+  # Service สำหรับฐานข้อมูล PostgreSQL
+  db:
+    image: postgres:18.0
+    container_name: loan_project_db
+    # restart: always
+    environment:
+      POSTGRES_USER: devadmin          # ชื่อผู้ใช้สำหรับฐานข้อมูล
+      POSTGRES_PASSWORD: devpassword      # รหัสผ่าน (แนะนำให้เปลี่ยนเพื่อความปลอดภัย)
+      POSTGRES_DB: loan_db             # ชื่อฐานข้อมูล
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Service สำหรับ Adminer (เครื่องมือจัดการ Database ผ่านเว็บ)
+  adminer:
+    image: adminer
+    container_name: loan_project_adminer
+    # restart: always
+    ports:
+      - "2020:8080"
+
+# กำหนด Volume เพื่อเก็บข้อมูลของ PostgreSQL อย่างถาวร
+volumes:
+  postgres_data:
