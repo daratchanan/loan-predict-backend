@@ -44,17 +44,30 @@ def create_application_and_predict(
     application_data: LoanApplicationRequest, 
     db: Session = Depends(get_db)
 ):
-    prediction_result, engineered_data, original_purpose = get_prediction(application_data)
+    # 1. get_prediction จะคืนค่า df_with_engineered_features มาด้วย
+    prediction_result, df_with_engineered_features, original_purpose = get_prediction(application_data)
     
-    db_record_data = engineered_data.to_dict('records')[0]
-    db_record_data['purpose'] = original_purpose
+    # 2. เริ่มต้นสร้าง Dictionary สำหรับบันทึกลง DB จากข้อมูลดิบที่รับเข้ามา
+    db_dict = application_data.dict()
     
-    # เพิ่มผลการทำนายเข้าไปใน record ที่จะบันทึก
+    # 3. ดึงค่าฟีเจอร์ที่สร้างขึ้นใหม่ (Engineered Features) จาก DataFrame ที่ predict.py ส่งมา
+    engineered_features = df_with_engineered_features[[
+        'estimated_credit_limit', 
+        'installment_to_income_ratio', 
+        'high_interest'
+    ]].to_dict('records')[0]
+
+    # 4. รวมข้อมูลทั้งหมดเข้าด้วยกัน
+    db_dict.update(engineered_features) # เพิ่ม engineered features
+    
+    # เพิ่มผลลัพธ์จากโมเดล
     prediction_value = 1 if prediction_result["prediction"] == "ไม่ผ่านเกณฑ์" else 0
-    db_record_data['model_prediction'] = prediction_value
-    db_record_data['model_probability'] = prediction_result["probability"]
+    db_dict['model_prediction'] = prediction_value
+    db_dict['model_probability'] = prediction_result["probability"]
+    db_dict['lime_explanation'] = prediction_result["explanation"]
     
-    db_record = db_models.LoanData(**db_record_data)
+    # สร้าง ORM object จาก Dictionary ที่มีโครงสร้างถูกต้องแล้ว
+    db_record = db_models.LoanData(**db_dict)
     
     db.add(db_record)
     db.commit()

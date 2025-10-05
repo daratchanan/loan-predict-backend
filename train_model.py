@@ -109,6 +109,9 @@ X_train_int = X_train.assign(**{c: X_train[c].astype(int) for c in cat_cols})
 
 X_test_int = X_test.assign(**{c: X_test[c].astype(int) for c in cat_cols})
 
+X_train_int.to_csv('data/X_train_cleaned.csv', index=False)
+print("✅ บันทึกไฟล์ data/X_train_cleaned.csv สำหรับ LIME เรียบร้อยแล้ว")
+
 # 5.2 หาตำแหน่งของคอลัมน์หมวดหมู่ 
 categorical_indices = [X_train_int.columns.get_loc(c) for c in cat_cols]
 

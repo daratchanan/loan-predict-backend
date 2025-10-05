@@ -1,7 +1,6 @@
 # app/db_models.py
 
-
-import datetime
+from datetime import datetime
 from sqlalchemy import Column, Integer, Numeric, Boolean, String, DateTime
 from sqlalchemy.sql import func
 from .database import Base  # Import Base class จากไฟล์ database.py
@@ -33,6 +32,7 @@ class LoanData(Base):
     high_interest = Column(Integer)
     model_prediction = Column(Integer, nullable=True)
     model_probability = Column(Numeric, nullable=True)
+    lime_explanation = Column(JSONB, nullable=True)
 class ModelPerformanceLog(Base):
     __tablename__ = 'model_performance_logs'
     id = Column(Integer, primary_key=True)

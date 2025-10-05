@@ -27,6 +27,7 @@ class PredictionResponse(BaseModel):
     probability: float
     fico_score: int
     interest_rate: float
+    explanation: Dict[str, Any]
 
 # --- Models for Dashboard Endpoint ---
 class RecentApplication(BaseModel):

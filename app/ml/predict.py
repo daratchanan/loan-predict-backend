@@ -3,51 +3,95 @@ import joblib
 import pandas as pd
 import numpy as np
 from app.models import LoanApplicationRequest
+import lime
+import lime.lime_tabular
 
-# โหลด model pipeline
+# --- ส่วนที่ 1: Setup โมเดลและ LIME Explainer (ทำงานครั้งเดียวตอนเริ่ม API) ---
+
+# 1.1 โหลดโมเดลที่ฝึกสอนเสร็จแล้ว
 model = joblib.load("app/ml/model_pipeline.joblib")
-median_int_rate = 0.1221 # ค่า median ที่เราใช้ตอน train
+
+# 1.2 โหลดข้อมูล Train set ที่ Clean แล้ว (จำเป็นสำหรับ LIME)
+try:
+    X_train_clean = pd.read_csv('data/X_train_cleaned.csv')
+    feature_names = X_train_clean.columns.tolist()
+except FileNotFoundError:
+    print("FATAL ERROR: data/X_train_cleaned.csv not found. LIME explainer cannot be created.")
+    # ในกรณีที่ไม่มีไฟล์นี้ ระบบจะไม่สามารถสร้าง explainer ได้
+    # ควรทำให้แอปฯ หยุดทำงาน หรือมี fallback ที่เหมาะสม
+    raise
+
+# 1.3 สร้าง LIME Explainer object
+explainer = lime.lime_tabular.LimeTabularExplainer(
+    training_data=X_train_clean.values,
+    feature_names=feature_names,
+    class_names=['ผ่านเกณฑ์', 'ไม่ผ่านเกณฑ์'],
+    mode='classification'
+)
+
+
+# --- ส่วนที่ 2: ฟังก์ชันสำหรับทำนายผล (ทำงานทุกครั้งที่มี Request) ---
 
 def get_prediction(data: LoanApplicationRequest):
-    # 1. สร้าง DataFrame จากข้อมูลที่รับมา
+    """
+    ทำนายผลสินเชื่อจากข้อมูลใบสมัคร โดยมีขั้นตอนเตรียมข้อมูลที่สมบูรณ์
+    """
+    
+    # --- 1. เตรียมข้อมูล (Feature Engineering) ---
     df = pd.DataFrame([data.dict()])
-
-    # 2. ทำ Feature Engineering ให้เหมือนกับตอน Train
     df['estimated_credit_limit'] = df['revol_bal'] / (df['revol_util'] + 0.001)
     df['annual_inc'] = np.exp(df['log_annual_inc'])
     df['installment_to_income_ratio'] = (df['installment'] * 12) / df['annual_inc']
+    df.drop('annual_inc', axis=1, inplace=True)
+    median_int_rate = 0.1221 
     df['high_interest'] = (df['int_rate'] > median_int_rate).astype(int)
 
-    # 3. ทำ One-Hot Encoding สำหรับ 'purpose'
-    # สร้างคอลัมน์ dummy ทั้งหมดให้มีค่าเป็น False ก่อน
-    df['purpose_debt_consolidation'] = False
-    df['purpose_educational'] = False
-    df['purpose_small_business'] = False
-    
-    # เช็คค่า purpose ที่รับมาแล้วกำหนดค่า True ให้ถูกคอลัมน์
-    if data.purpose == 'debt_consolidation':
-        df['purpose_debt_consolidation'] = True
-    elif data.purpose == 'educational':
-        df['purpose_educational'] = True
-    elif data.purpose == 'small_business':
-        df['purpose_small_business'] = True
-        
-    # 4. จัดเรียงคอลัมน์ให้ตรงกับที่โมเดลคาดหวัง
-    # (จำเป็นมาก เพราะ model.predict คาดหวังลำดับคอลัมน์ที่ถูกต้อง)
-    model_features = model.named_steps['classifier'].feature_names_in_
-    df_final = df[model_features]
+    # --- 2. สร้าง DataFrame ให้มีโครงสร้างตรงกับที่โมเดลคาดหวัง ---
+    df_processed = pd.DataFrame(columns=feature_names, index=df.index)
+    df_processed.update(df)
 
-    # 5. ทำนายผล
+    if f'purpose_{data.purpose}' in df_processed.columns:
+        df_processed[f'purpose_{data.purpose}'] = 1
+
+    df_processed.fillna(0, inplace=True)
+    df_final = df_processed[feature_names]
+
+    # --- 3. ทำนายผล ---
+    best_threshold = 0.17
     probability = model.predict_proba(df_final)[0, 1]
-    prediction_value = model.predict(df_final)[0]
+    prediction_value = 1 if probability >= best_threshold else 0
     prediction_label = "ไม่ผ่านเกณฑ์" if prediction_value == 1 else "ผ่านเกณฑ์"
 
+    # =========================================================================
+    # =====> เพิ่มโค้ดส่วนนี้เข้าไป <=====
+
+    # 4. สร้างฟังก์ชันตัวกลาง (Wrapper) สำหรับ LIME
+    def predict_fn_for_lime(numpy_array):
+        # แปลง NumPy array กลับเป็น DataFrame พร้อมชื่อคอลัมน์ที่ถูกต้อง
+        data_as_df = pd.DataFrame(numpy_array, columns=feature_names)
+        # ส่ง DataFrame นี้ไปให้โมเดลทำนาย
+        return model.predict_proba(data_as_df)
+
+    # =========================================================================
+
+    # --- 5. คำนวณ LIME Explanation ---
+    explanation_lime = explainer.explain_instance(
+        data_row=df_final.iloc[0].values,
+        # --- เปลี่ยนไปใช้ฟังก์ชันตัวกลางที่เราสร้างขึ้น ---
+        predict_fn=predict_fn_for_lime,
+        num_features=5 
+    )
+    explanation_dict = dict(explanation_lime.as_list())
+
+    # --- 6. รวบรวมผลลัพธ์ ---
     prediction_result = {
         "prediction": prediction_label,
         "probability": float(probability),
         "fico_score": data.fico,
-        "interest_rate": data.int_rate
+        "interest_rate": data.int_rate,
+        "explanation": explanation_dict
     }
     
-    # คืนค่า 2 อย่าง: ผลการทำนาย และ ข้อมูลที่แปลงแล้ว
-    return prediction_result, df_final ,data.purpose
+    db_record_data = df_final.reset_index(drop=True)
+
+    return prediction_result, db_record_data, data.purpose
