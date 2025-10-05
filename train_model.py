@@ -252,6 +252,7 @@ class ModelPerformanceLog(Base):
     f1_score_class_1 = Column(Numeric)
     is_active = Column(Boolean, default=False)
     meta_model_importances = Column(JSONB)
+    optimal_threshold = Column(Numeric)
 
 # 10.2 สร้าง Session สำหรับคุยกับ Database
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -290,8 +291,8 @@ try:
         recall_class_1=class_1_metrics.get('recall'),
         f1_score_class_1=class_1_metrics.get('f1-score'),
         is_active=True,
-        # --- เปลี่ยนไปใช้ข้อมูลที่คำนวณใหม่ ---
-        meta_model_importances=meta_importance_dict
+        meta_model_importances=meta_importance_dict,
+        optimal_threshold=best_threshold
     )
 
     # 10.6 เพิ่มและ commit ข้อมูลใหม่
