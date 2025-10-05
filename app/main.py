@@ -4,7 +4,7 @@ from typing import Optional
 import math
 from sqlalchemy.orm import Session
 from sqlalchemy import func, cast, Float
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import pandas as pd
 
 from .models import LoanApplicationRequest, PredictionResponse, PerformanceResponse, DashboardResponse, RecentApplication, BreakdownItem
@@ -78,44 +78,63 @@ def create_application_and_predict(
 @app.get("/dashboard", response_model=DashboardResponse, tags=["Dashboard"])
 def get_dashboard_data(
     db: Session = Depends(get_db),
+    # --- เพิ่ม Query Parameters สำหรับ Date Filter ---
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    # --- Parameters เดิม ---
     prediction_filter: Optional[int] = Query(None, description="Filter by prediction (0=ผ่านเกณฑ์, 1=ไม่ผ่านเกณฑ์)"),
-    purpose_filter: Optional[str] = Query(None, description="Filter by a specific purpose (e.g., 'debt_consolidation')"), # <--- 1. เพิ่มบรรทัดนี้
+    purpose_filter: Optional[str] = Query(None, description="Filter by a specific purpose"),
     sort_by: Optional[str] = Query(None, description="Sort by 'int_rate' or 'model_probability'"),
     sort_order: str = Query("desc", description="Sort order: 'asc' or 'desc'"),
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1)
 ):
     """
-    ดึงข้อมูลทั้งหมดสำหรับหน้า Dashboard พร้อม Pagination, Filter, และ Sort
+    ดึงข้อมูลทั้งหมดสำหรับหน้า Dashboard พร้อม Date Filter, Pagination, และ Sort
     """
-    # --- 1 & 2. KPIs (เหมือนเดิม) ---
-    total_applications = db.query(db_models.LoanData).count()
-    thirty_days_ago = datetime.now() - timedelta(days=30)
-    approval_rate_query = db.query(func.avg(cast(db_models.LoanData.credit_policy, Float))).filter(db_models.LoanData.application_date >= thirty_days_ago).scalar()
+    # --- 1. จัดการ Date Filter ---
+    try:
+        if start_date and end_date:
+            start_date_obj = date.fromisoformat(start_date)
+            # เพิ่มเวลา 23:59:59 ให้ end_date เพื่อให้รวมข้อมูลทั้งวัน
+            end_date_obj = datetime.combine(date.fromisoformat(end_date), datetime.max.time())
+        else:
+            # ถ้าไม่ส่งมา, ใช้ค่า default ย้อนหลัง 30 วัน
+            end_date_obj = datetime.now()
+            start_date_obj = end_date_obj - timedelta(days=30)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Please use YYYY-MM-DD.")
+
+    # --- 2. สร้าง Base Query ที่มี Date Filter ---
+    # Query ทั้งหมดจะใช้ base_query นี้เพื่อให้ข้อมูลสอดคล้องกัน
+    base_query = db.query(db_models.LoanData).filter(
+        db_models.LoanData.application_date.between(start_date_obj, end_date_obj)
+    )
+
+    # --- 3. KPIs (ใช้ base_query) ---
+    total_applications = base_query.count()
+    # คำนวณ Approval Rate จากช่วงวันที่ที่เลือกเท่านั้น
+    approval_rate_query = base_query.with_entities(func.avg(cast(db_models.LoanData.credit_policy, Float))).scalar()
     approval_rate = round((approval_rate_query or 0.0) * 100, 2)
 
-    # --- 3. Recent Applications Table (with dynamic query) ---
-    query = db.query(db_models.LoanData)
+    # --- 4. Recent Applications Table (ใช้ base_query) ---
+    query = base_query # เริ่มจาก base query ที่กรองวันที่แล้ว
     
-    # Filtering
+    # Filtering เพิ่มเติม
     if prediction_filter is not None:
         query = query.filter(db_models.LoanData.model_prediction == prediction_filter)
-    
-    if purpose_filter: # <--- 2. เพิ่มเงื่อนไข 2 บรรทัดนี้
+    if purpose_filter:
         query = query.filter(db_models.LoanData.purpose == purpose_filter)
         
     # Sorting
     if sort_by in ["int_rate", "model_probability"]:
         column_to_sort = getattr(db_models.LoanData, sort_by)
-        if sort_order == "desc":
-            query = query.order_by(column_to_sort.desc())
-        else:
-            query = query.order_by(column_to_sort.asc())
-    else: # Default sort
+        query = query.order_by(column_to_sort.desc() if sort_order == "desc" else column_to_sort.asc())
+    else: 
         query = query.order_by(db_models.LoanData.application_date.desc())
         
     # Pagination
-    total_items = query.count() # <-- .count() จะนับรายการที่ผ่านการ filter แล้ว
+    total_items = query.count()
     total_pages = math.ceil(total_items / page_size)
     paginated_apps = query.offset((page - 1) * page_size).limit(page_size).all()
     
@@ -126,8 +145,8 @@ def get_dashboard_data(
         "items": paginated_apps
     }
 
-    # --- 4 & 5. Breakdowns (เหมือนเดิม) ---
-    prediction_counts = db.query(
+    # --- 5. Breakdowns (ใช้ base_query) ---
+    prediction_counts = base_query.with_entities(
         db_models.LoanData.model_prediction,
         func.count(db_models.LoanData.model_prediction)
     ).group_by(db_models.LoanData.model_prediction).all()
@@ -137,7 +156,7 @@ def get_dashboard_data(
         BreakdownItem(label="ไม่ผ่านเกณฑ์", value=next((c for p, c in prediction_counts if p == 1), 0))
     ]
 
-    purpose_counts_query = db.query(
+    purpose_counts_query = base_query.with_entities(
         db_models.LoanData.purpose,
         func.count(db_models.LoanData.purpose).label('count')
     ).group_by(db_models.LoanData.purpose).order_by(func.count(db_models.LoanData.purpose).desc()).all()

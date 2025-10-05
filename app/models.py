@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel
 from datetime import datetime 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # --- Input Model for Prediction Endpoint ---
 
@@ -38,6 +38,7 @@ class RecentApplication(BaseModel):
     int_rate: float
     model_prediction: int
     model_probability: float
+    lime_explanation: Optional[Dict[str, Any]] = None
 
     class Config:
         from_attributes = True
