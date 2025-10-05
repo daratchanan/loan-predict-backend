@@ -248,7 +248,7 @@ class ModelPerformanceLog(Base):
     recall_class_1 = Column(Numeric)
     f1_score_class_1 = Column(Numeric)
     is_active = Column(Boolean, default=False)
-    feature_importances = Column(JSONB)
+    meta_model_importances = Column(JSONB)
 
 # 10.2 สร้าง Session สำหรับคุยกับ Database
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -261,15 +261,22 @@ try:
     db.commit()
 
     # 10.4 เตรียมข้อมูลสำหรับบันทึก
-    # สร้าง version ของโมเดลจากวันที่และเวลาปัจจุบัน
     model_version_str = f"v{datetime.now().strftime('%Y%m%d%H%M%S')}"
-
-    # ดึงค่า precision, recall, f1-score ของ class 1 (fully_paid) จาก classification_report
     report_dict = classification_report(y_test, y_pred_best, output_dict=True)
-    class_1_metrics = report_dict.get('1', {}) # ใช้ .get เพื่อความปลอดภัยหาก class 1 ไม่มีใน report
+    class_1_metrics = report_dict.get('1', {})
 
-    # หมายเหตุ: feature_importances สำหรับ Stacking Model มีความซับซ้อนในการคำนวณ
-    # และตีความ จึงขอไม่บันทึกในขั้นตอนนี้ (ใส่เป็น None)
+    # --- เพิ่มส่วนนี้: คำนวณ Meta-Model Importances ---
+    print("   - กำลังคำนวณความสำคัญของ Base Models...")
+    # เข้าถึง Stacking model ที่ train เสร็จแล้ว
+    trained_stacking_model = model_pipeline.named_steps['stack']
+    # เข้าถึง Meta-Model (XGBoost) ที่ train เสร็จแล้ว (ต้องผ่าน Wrapper ก่อน)
+    meta_model = trained_stacking_model.final_estimator_.estimators_[0]
+    # ดึงชื่อ Base Models และค่า Importances
+    base_model_names = [name for name, _ in trained_stacking_model.estimators]
+    meta_importances = meta_model.feature_importances_
+    # สร้าง Dictionary ที่อ่านง่าย (แปลง numpy float เป็น float ปกติ)
+    meta_importance_dict = {name: float(imp) for name, imp in zip(base_model_names, meta_importances)}
+    # ---------------------------------------------------
     
     # 10.5 สร้าง Log object ใหม่
     new_log = ModelPerformanceLog(
@@ -280,7 +287,8 @@ try:
         recall_class_1=class_1_metrics.get('recall'),
         f1_score_class_1=class_1_metrics.get('f1-score'),
         is_active=True,
-        feature_importances=None 
+        # --- เปลี่ยนไปใช้ข้อมูลที่คำนวณใหม่ ---
+        meta_model_importances=meta_importance_dict
     )
 
     # 10.6 เพิ่มและ commit ข้อมูลใหม่
@@ -288,6 +296,7 @@ try:
     db.commit()
     db.refresh(new_log)
     print(f"   - ✅ บันทึกผลการประเมินสำหรับโมเดลเวอร์ชัน '{model_version_str}' เรียบร้อยแล้ว")
+    print(f"   - Meta-Model Importances: {meta_importance_dict}")
 
 except Exception as e:
     print(f"   - ❌ เกิดข้อผิดพลาดในการบันทึกข้อมูลลง Database: {e}")

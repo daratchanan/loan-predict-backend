@@ -1,6 +1,7 @@
 # app/db_models.py
 
 
+import datetime
 from sqlalchemy import Column, Integer, Numeric, Boolean, String, DateTime
 from sqlalchemy.sql import func
 from .database import Base  # Import Base class จากไฟล์ database.py
@@ -34,13 +35,12 @@ class LoanData(Base):
     model_probability = Column(Numeric, nullable=True)
 class ModelPerformanceLog(Base):
     __tablename__ = 'model_performance_logs'
-
-    id = Column(Integer, primary_key=True, index=True)
-    model_version = Column(String(50), nullable=False)
-    training_date = Column(DateTime(timezone=True), server_default=func.now())
+    id = Column(Integer, primary_key=True)
+    model_version = Column(String(50))
+    training_date = Column(DateTime, default=datetime.now)
     accuracy = Column(Numeric)
     precision_class_1 = Column(Numeric)
     recall_class_1 = Column(Numeric)
     f1_score_class_1 = Column(Numeric)
-    feature_importances = Column(JSONB)
     is_active = Column(Boolean, default=False)
+    meta_model_importances = Column(JSONB)
