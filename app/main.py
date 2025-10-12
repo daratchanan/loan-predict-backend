@@ -45,7 +45,7 @@ def create_application_and_predict(
     db: Session = Depends(get_db)
 ):
     # 1. get_prediction จะคืนค่า df_with_engineered_features มาด้วย
-    prediction_result, df_with_engineered_features, original_purpose = get_prediction(application_data)
+    prediction_result, df_with_engineered_features, original_purpose = get_prediction(application_data, db)
     
     # 2. เริ่มต้นสร้าง Dictionary สำหรับบันทึกลง DB จากข้อมูลดิบที่รับเข้ามา
     db_dict = application_data.dict()

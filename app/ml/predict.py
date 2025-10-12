@@ -5,6 +5,9 @@ import numpy as np
 from app.models import LoanApplicationRequest
 import lime
 import lime.lime_tabular
+from sqlalchemy.orm import Session
+from app import db_models
+
 
 # --- ส่วนที่ 1: Setup โมเดลและ LIME Explainer (ทำงานครั้งเดียวตอนเริ่ม API) ---
 
@@ -32,7 +35,7 @@ explainer = lime.lime_tabular.LimeTabularExplainer(
 
 # --- ส่วนที่ 2: ฟังก์ชันสำหรับทำนายผล (ทำงานทุกครั้งที่มี Request) ---
 
-def get_prediction(data: LoanApplicationRequest):
+def get_prediction(data: LoanApplicationRequest, db: Session):
     """
     ทำนายผลสินเชื่อจากข้อมูลใบสมัคร โดยมีขั้นตอนเตรียมข้อมูลที่สมบูรณ์
     """
@@ -56,8 +59,15 @@ def get_prediction(data: LoanApplicationRequest):
     df_processed.fillna(0, inplace=True)
     df_final = df_processed[feature_names]
 
-    # --- 3. ทำนายผล ---
-    best_threshold = 0.17
+    # --- 3. ดึง OPTIMAL THRESHOLD จาก DATABASE ---
+    active_model_log = db.query(db_models.ModelPerformanceLog)\
+                         .filter(db_models.ModelPerformanceLog.is_active == True)\
+                         .first()
+    # ถ้าหาไม่เจอ หรือค่าเป็น None, ให้ใช้ค่า Default ที่ปลอดภัย
+    best_threshold = float(active_model_log.optimal_threshold) if active_model_log and active_model_log.optimal_threshold is not None else 0.5
+    print(f"Using Optimal Threshold from DB: {best_threshold}")
+
+    # --- 4. ทำนายผล (ใช้ Threshold ที่ดึงมา) ---
     probability = model.predict_proba(df_final)[0, 1]
     prediction_value = 1 if probability >= best_threshold else 0
     prediction_label = "ไม่ผ่านเกณฑ์" if prediction_value == 1 else "ผ่านเกณฑ์"

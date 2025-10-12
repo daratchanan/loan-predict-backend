@@ -44,3 +44,4 @@ class ModelPerformanceLog(Base):
     f1_score_class_1 = Column(Numeric)
     is_active = Column(Boolean, default=False)
     meta_model_importances = Column(JSONB)
+    optimal_threshold = Column(Numeric, nullable=True)
