@@ -171,7 +171,7 @@ def retrain_model_task():
             precision_class_1=class_1_metrics.get('precision'),
             recall_class_1=class_1_metrics.get('recall'),
             f1_score_class_1=class_1_metrics.get('f1-score'),
-            feature_importances=meta_importance_dict, # แก้ไข: ใช้ meta importances
+            meta_model_importances=meta_importance_dict, # แก้ไข: ใช้ meta importances
             optimal_threshold=best_threshold,      # เพิ่ม: บันทึก threshold
             is_active=True
         )
