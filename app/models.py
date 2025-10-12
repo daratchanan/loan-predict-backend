@@ -68,7 +68,8 @@ class PerformanceResponse(BaseModel):
     precision_class_1: float
     recall_class_1: float
     f1_score_class_1: float
-    feature_importances: Dict[str, Any]
+    meta_model_importances: Dict[str, Any]
+    optimal_threshold: float
 
     class Config:
         from_attributes = True # for SQLAlchemy ORM compatibility
