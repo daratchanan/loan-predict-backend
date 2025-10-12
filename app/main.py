@@ -1,4 +1,5 @@
 # app/main.py
+import os
 from fastapi import FastAPI, Depends,Query, BackgroundTasks, HTTPException, status
 from typing import List, Optional
 import math
@@ -9,7 +10,7 @@ from datetime import date, datetime, timedelta
 
 from .models import LoanApplicationRequest, PredictionResponse, PerformanceResponse, DashboardResponse, BreakdownItem
 from .ml.predict import get_prediction, model 
-from .database import engine, get_db
+from .database import engine, get_db, SessionLocal
 from . import db_models
 from .ml.retrain import retrain_model_task
 
@@ -19,6 +20,78 @@ from .auth import get_current_active_user
 from . import db_models
 
 from fastapi.middleware.cors import CORSMiddleware
+
+def create_initial_data():
+    """
+    ฟังก์ชันสำหรับสร้างข้อมูลเริ่มต้น (Roles และ Users)
+    จะถูกเรียกใช้งานตอน Startup
+    """
+    # สร้าง DB Session เฉพาะกิจสำหรับ Startup
+    db = SessionLocal()
+    try:
+        print("--- Checking for initial data ---")
+
+        # --- 1. ตรวจสอบและสร้าง Roles ---
+        initial_roles = [
+            {"name": "admin", "description": "Administrator with all permissions"},
+            {"name": "loan_officer", "description": "Loan officer who can create applications"}
+        ]
+        
+        for role_data in initial_roles:
+            role = db.query(db_models.Role).filter(db_models.Role.name == role_data["name"]).first()
+            if not role:
+                db.add(db_models.Role(**role_data))
+                print(f"Role '{role_data['name']}' created.")
+        
+        db.commit() # Commit เพื่อให้ Roles พร้อมใช้งาน
+
+        # --- 2. ตรวจสอบและสร้าง Admin User ---
+        admin_username = os.getenv("ADMIN_USERNAME")
+        admin_password = os.getenv("ADMIN_PASSWORD")
+
+        if admin_username and admin_password:
+            admin_user = db.query(db_models.User).filter(db_models.User.username == admin_username).first()
+            if not admin_user:
+                hashed_password = auth.get_password_hash(admin_password)
+                admin_role = db.query(db_models.Role).filter(db_models.Role.name == "admin").first()
+                
+                new_admin = db_models.User(
+                    username=admin_username, 
+                    hashed_password=hashed_password,
+                    is_active=True
+                )
+                if admin_role:
+                    new_admin.roles.append(admin_role)
+                
+                db.add(new_admin)
+                print(f"Admin user '{admin_username}' created.")
+        
+        # --- 3. ตรวจสอบและสร้าง Loan Officer User ---
+        officer_username = os.getenv("OFFICER_USERNAME")
+        officer_password = os.getenv("OFFICER_PASSWORD")
+
+        if officer_username and officer_password:
+            officer_user = db.query(db_models.User).filter(db_models.User.username == officer_username).first()
+            if not officer_user:
+                hashed_password = auth.get_password_hash(officer_password)
+                officer_role = db.query(db_models.Role).filter(db_models.Role.name == "loan_officer").first()
+
+                new_officer = db_models.User(
+                    username=officer_username,
+                    hashed_password=hashed_password,
+                    is_active=True
+                )
+                if officer_role:
+                    new_officer.roles.append(officer_role)
+
+                db.add(new_officer)
+                print(f"Loan Officer user '{officer_username}' created.")
+
+        db.commit()
+        print("--- Initial data check complete ---")
+
+    finally:
+        db.close()
 
 def role_checker(required_roles: List[str]):
     """
@@ -59,6 +132,16 @@ app.add_middleware(
 # สร้าง Dependency สำหรับแต่ละ Role ที่ต้องการ
 admin_only = role_checker(["admin"])
 loan_officer_or_admin = role_checker(["loan_officer", "admin"])
+
+@app.on_event("startup")
+async def startup_event():
+    """
+    Event ที่จะทำงานตอนเริ่มรัน Application
+    """
+    # สร้างตารางทั้งหมดในฐานข้อมูล (ถ้ายังไม่มี)
+    db_models.Base.metadata.create_all(bind=engine)
+    # เรียกใช้ฟังก์ชันสร้างข้อมูลเริ่มต้น
+    create_initial_data()
 
 @app.get("/", tags=["Root"])
 def read_root():
