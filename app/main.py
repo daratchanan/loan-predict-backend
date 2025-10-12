@@ -16,7 +16,7 @@ from .ml.retrain import retrain_model_task
 
 from . import auth, db_models, schemas
 from .database import engine, get_db
-from .auth import get_current_active_user 
+from .auth import get_current_active_user, get_user 
 from . import db_models
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -164,10 +164,19 @@ def login_for_access_token(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    
+    # 1. ดึงรายชื่อ Role ของ User ออกมาเป็น List ของ string
+    user_roles = [role.name for role in user.roles]
+    
+    # 2. สร้าง data dictionary ที่มีทั้ง sub (username) และ roles
+    token_data = {"sub": user.username, "roles": user_roles}
+
     access_token_expires = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
+
     access_token = auth.create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
+        data=token_data, expires_delta=access_token_expires
     )
+    
     return {"access_token": access_token, "token_type": "bearer"}
 
 
