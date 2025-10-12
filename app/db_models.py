@@ -1,10 +1,12 @@
 # app/db_models.py
 
 from datetime import datetime
-from sqlalchemy import Column, Integer, Numeric, Boolean, String, DateTime
+from sqlalchemy import Column, Integer, Numeric, Boolean, String, DateTime, ForeignKey
 from sqlalchemy.sql import func
 from .database import Base  # Import Base class จากไฟล์ database.py
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import relationship
+from sqlalchemy import Table
 
 # คลาสนี้คือการจำลองตาราง loan_data ในรูปแบบของ Python class
 class LoanData(Base):
@@ -45,3 +47,28 @@ class ModelPerformanceLog(Base):
     is_active = Column(Boolean, default=False)
     meta_model_importances = Column(JSONB)
     optimal_threshold = Column(Numeric, nullable=True)
+
+    # ตารางสำหรับเก็บความสัมพันธ์ Many-to-Many ระหว่าง User และ Role
+user_roles = Table('user_roles', Base.metadata,
+    Column('user_id', Integer, ForeignKey('users.id')),
+    Column('role_id', Integer, ForeignKey('roles.id'))
+)
+
+class User(Base):
+    __tablename__ = 'users'
+    id = Column(Integer, primary_key=True)
+    username = Column(String(50), unique=True, index=True)
+    hashed_password = Column(String)
+    is_active = Column(Boolean, default=True)
+    
+    # ความสัมพันธ์: User หนึ่งคนสามารถมีได้หลาย Role
+    roles = relationship("Role", secondary=user_roles, back_populates="users")
+
+class Role(Base):
+    __tablename__ = 'roles'
+    id = Column(Integer, primary_key=True)
+    name = Column(String(50), unique=True)
+    description = Column(String(255))
+    
+    # ความสัมพันธ์: Role หนึ่งสามารถมีได้หลาย User
+    users = relationship("User", secondary=user_roles, back_populates="roles")

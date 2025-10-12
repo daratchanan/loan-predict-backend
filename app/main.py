@@ -1,19 +1,40 @@
 # app/main.py
-from fastapi import FastAPI, Depends,Query, BackgroundTasks, HTTPException
-from typing import Optional
+from fastapi import FastAPI, Depends,Query, BackgroundTasks, HTTPException, status
+from typing import List, Optional
 import math
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy import func, cast, Float
 from datetime import date, datetime, timedelta
-import pandas as pd
 
-from .models import LoanApplicationRequest, PredictionResponse, PerformanceResponse, DashboardResponse, RecentApplication, BreakdownItem
-from .ml.predict import get_prediction, model # Import model มาด้วย
+from .models import LoanApplicationRequest, PredictionResponse, PerformanceResponse, DashboardResponse, BreakdownItem
+from .ml.predict import get_prediction, model 
 from .database import engine, get_db
 from . import db_models
 from .ml.retrain import retrain_model_task
 
+from . import auth, db_models, schemas
+from .database import engine, get_db
+from .auth import get_current_active_user 
+from . import db_models
+
 from fastapi.middleware.cors import CORSMiddleware
+
+def role_checker(required_roles: List[str]):
+    """
+    นี่คือ Factory ที่สร้าง Dependency สำหรับตรวจสอบ Role
+    """
+    def check_user_role(current_user: db_models.User = Depends(get_current_active_user)):
+        user_roles = {role.name for role in current_user.roles}
+        
+        # ตรวจสอบว่า user มี role ที่ต้องการอย่างน้อยหนึ่ง role หรือไม่
+        if not any(role in user_roles for role in required_roles):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to perform this action"
+            )
+        return current_user
+    return check_user_role
 
 db_models.Base.metadata.create_all(bind=engine)
 
@@ -35,14 +56,65 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# สร้าง Dependency สำหรับแต่ละ Role ที่ต้องการ
+admin_only = role_checker(["admin"])
+loan_officer_or_admin = role_checker(["loan_officer", "admin"])
+
 @app.get("/", tags=["Root"])
 def read_root():
     return {"message": "Welcome to the Loan Approval API"}
 
+# --- เพิ่ม Endpoint สำหรับ Authentication ---
+
+@app.post("/token", response_model=schemas.Token, tags=["Authentication"])
+def login_for_access_token(
+    form_data: OAuth2PasswordRequestForm = Depends(), 
+    db: Session = Depends(get_db)
+):
+    """
+    รับ username และ password จากฟอร์ม, ตรวจสอบ, และคืน JWT Token
+    """
+    user = get_user(db, form_data.username)
+    if not user or not auth.verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = auth.create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@app.get("/users/me", response_model=schemas.User, tags=["Users"])
+def read_users_me(current_user: schemas.User = Depends(auth.get_current_active_user)):
+    """
+    Endpoint สำหรับทดสอบว่า Token ใช้งานได้หรือไม่
+    จะคืนข้อมูลของ User ที่ Login อยู่
+    """
+    return current_user
+
+# (แนะนำ) Endpoint สำหรับสร้าง User ใหม่
+@app.post("/users/", response_model=schemas.User, tags=["Users"])
+def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
+    db_user = auth.get_user(db, username=user.username)
+    if db_user:
+        raise HTTPException(status_code=400, detail="Username already registered")
+    
+    hashed_password = auth.get_password_hash(user.password)
+    new_user = db_models.User(username=user.username, hashed_password=hashed_password)
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return new_user
+
 @app.post("/applications", response_model=PredictionResponse, tags=["Applications"])
 def create_application_and_predict(
     application_data: LoanApplicationRequest, 
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: db_models.User = Depends(loan_officer_or_admin)
 ):
     # 1. get_prediction จะคืนค่า df_with_engineered_features มาด้วย
     prediction_result, df_with_engineered_features, original_purpose = get_prediction(application_data, db)
@@ -78,10 +150,9 @@ def create_application_and_predict(
 @app.get("/dashboard", response_model=DashboardResponse, tags=["Dashboard"])
 def get_dashboard_data(
     db: Session = Depends(get_db),
-    # --- เพิ่ม Query Parameters สำหรับ Date Filter ---
+    current_user: db_models.User = Depends(get_current_active_user),
     start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
     end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
-    # --- Parameters เดิม ---
     prediction_filter: Optional[int] = Query(None, description="Filter by prediction (0=ผ่านเกณฑ์, 1=ไม่ผ่านเกณฑ์)"),
     purpose_filter: Optional[str] = Query(None, description="Filter by a specific purpose"),
     sort_by: Optional[str] = Query(None, description="Sort by 'int_rate' or 'model_probability'"),
@@ -172,9 +243,12 @@ def get_dashboard_data(
     )
 
 @app.post("/retrain", tags=["Training"])
-def retrain_model(background_tasks: BackgroundTasks):
-    background_tasks.add_task(retrain_model_task) # <--- ตรวจสอบให้แน่ใจว่าชื่อตรงนี้ถูกต้องด้วย
-    return {"message": "กระบวนการ Retrain โมเดลได้เริ่มขึ้นแล้ว (ทำงานใน Background)"}
+def retrain_model(
+    background_tasks: BackgroundTasks,
+    current_user: db_models.User = Depends(admin_only)
+    ):
+    background_tasks.add_task(retrain_model_task) 
+    return {"message": "Model retraining process has been started. (ทำงานใน Background)"}
 
 @app.get("/model-performance", response_model=PerformanceResponse, tags=["Performance"])
 def get_active_model_performance(db: Session = Depends(get_db)):
