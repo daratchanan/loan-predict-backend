@@ -277,7 +277,9 @@ def get_dashboard_data(
     # --- 3. KPIs (ใช้ base_query) ---
     total_applications = base_query.count()
     # คำนวณ Approval Rate จากช่วงวันที่ที่เลือกเท่านั้น
-    approval_rate_query = base_query.with_entities(func.avg(cast(db_models.LoanData.credit_policy, Float))).scalar()
+    approval_rate_query = base_query.with_entities(
+        func.avg(cast(1 - db_models.LoanData.model_prediction, Float))
+    ).scalar()
     approval_rate = round((approval_rate_query or 0.0) * 100, 2)
 
     # --- 4. Recent Applications Table (ใช้ base_query) ---
