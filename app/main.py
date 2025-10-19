@@ -21,6 +21,8 @@ from . import db_models
 
 from fastapi.middleware.cors import CORSMiddleware
 
+from app import models
+
 def create_initial_data():
     """
     ฟังก์ชันสำหรับสร้างข้อมูลเริ่มต้น (Roles และ Users)
@@ -238,6 +240,25 @@ def create_application_and_predict(
     db.refresh(db_record)
     
     return PredictionResponse(**prediction_result)
+
+# app/main.py (ส่วนเพิ่มเติม)
+
+@app.get("/applications/{application_id}", response_model=models.RecentApplication, tags=["Applications"])
+def get_application_by_id(
+    application_id: int, 
+    db: Session = Depends(get_db),
+    current_user: db_models.User = Depends(get_current_active_user)
+):
+    """
+    ดึงข้อมูลใบสมัครและผลการทำนายสำหรับ ID ที่ระบุ
+    """
+    application = db.query(db_models.LoanData).filter(db_models.LoanData.id == application_id).first()
+    
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    
+    # คืนค่าเป็น RecentApplication ซึ่งมีโครงสร้างผลการทำนายครบถ้วน
+    return application
 
 @app.get("/dashboard", response_model=DashboardResponse, tags=["Dashboard"])
 def get_dashboard_data(
